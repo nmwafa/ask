@@ -104,3 +104,7 @@ journalctl -xeu sshd | ask
 sudo ss -tulnp | grep 4180 | ask "what service is this and how do I safely kill it?"
 
 ```
+
+![example-usage](example.png)
+
+> Vibe coded with Gemini
