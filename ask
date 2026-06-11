@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Replace with your OpenRouter API Key
+API_KEY="sk-..."
+
+# Read input from pipe (if any)
+PIPED_CONTEXT=""
+if [ ! -t 0 ]; then
+    # Read all data from stdin
+    PIPED_CONTEXT=$(cat)
+fi
+
+USER_QUERY="$1"
+
+# Validate empty input
+if [ -z "$USER_QUERY" ] && [ -z "$PIPED_CONTEXT" ]; then
+    echo "Usage: ask \"your question\""
+    echo "Pipe example: tail -n 20 /var/log/apache2/error.log | ask \"analyze this error and provide a solution\""
+    exit 1
+fi
+
+# Combine piped log/output with the main question
+if [ -n "$PIPED_CONTEXT" ]; then
+    if [ -z "$USER_QUERY" ]; then
+        USER_QUERY="Explain this output and provide a solution if there are any indications of errors."
+    fi
+    FINAL_PROMPT="Log/output context from Linux system:\n\n$PIPED_CONTEXT\n\nQuestion/Instruction: $USER_QUERY"
+else
+    FINAL_PROMPT="$USER_QUERY"
+fi
+
+# System prompt to lock the persona strictly as a Linux Troubleshooter
+SYSTEM_PROMPT="You are an expert Linux system assistant. Your ONLY task is to explain architecture, service configuration, and troubleshoot Linux issues. Provide technical, concise answers, and directly output the command solutions. Refuse to answer questions that are unrelated to Linux or servers."
+
+# Build the JSON payload using jq to safely handle special characters in logs
+JSON_PAYLOAD=$(jq -n \
+  --arg model "openrouter/auto" \
+  --arg sys "$SYSTEM_PROMPT" \
+  --arg usr "$FINAL_PROMPT" \
+  '{
+    model: $model,
+    messages: [
+      {role: "system", content: $sys},
+      {role: "user", content: $usr}
+    ]
+  }')
+
+echo -e "\e[33mAnalyzing...\e[0m"
+
+# Send request to OpenRouter
+RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$JSON_PAYLOAD")
+
+# Check for API errors
+API_ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+if [ -n "$API_ERROR" ]; then
+    echo -e "\e[31mAPI Error: $API_ERROR\e[0m"
+    exit 1
+fi
+
+# Extract and display the result
+RESULT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content' | sed 's/\*\*//g')
+echo -e "\n$RESULT\n"
